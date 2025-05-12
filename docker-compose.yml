@@ -1,0 +1,104 @@
+version: '2.2'
+
+services:
+  spark-master:
+    container_name: da-spark-master
+    build: .
+    image: da-spark-image
+    entrypoint: /opt/spark/entrypoint.sh
+    command: ['master', '--webui-port', '9090']
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:9090" ]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+    volumes:
+      - ./book_data:/opt/spark/data
+      - ./spark_apps:/opt/spark/apps
+      - spark-logs:/opt/spark/spark-events
+    env_file:
+      - .env.spark
+    ports:
+      - '9090:9090'
+      - '7077:7077'
+    networks:
+      - default
+
+  spark-history-server:
+    container_name: da-spark-history
+    image: da-spark-image
+    entrypoint: /opt/spark/entrypoint.sh
+    command: ['history']
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:18080"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    depends_on:
+      - spark-master
+    env_file:
+      - .env.spark
+    volumes:
+      - spark-logs:/opt/spark/spark-events
+    ports:
+      - '18080:18080'
+    networks:
+      - default
+
+  spark-worker:
+    image: da-spark-image
+    entrypoint: /opt/spark/entrypoint.sh
+    command: ['worker', 'spark://da-spark-master:7077']
+    depends_on:
+      - spark-master
+    env_file:
+      - .env.spark
+    volumes:
+      - ./book_data:/opt/spark/data
+      - ./spark_apps:/opt/spark/apps
+      - spark-logs:/opt/spark/spark-events
+    networks:
+      - default
+  
+  jupyter:
+    container_name: da-spark-jupyter
+    image: da-spark-image
+    command: jupyter notebook --notebook-dir=/opt/spark/apps --ip=0.0.0.0 --port=8888 --no-browser --allow-root --NotebookApp.token='' --NotebookApp.password=''
+    depends_on:
+      - spark-master
+    ports:
+      - '8888:8888'
+    volumes:
+      - ./book_data:/opt/spark/data
+      - ./spark_apps:/opt/spark/apps
+    environment:
+      - PYSPARK_PYTHON=python3
+      - PYSPARK_DRIVER_PYTHON=jupyter
+      - PYSPARK_DRIVER_PYTHON_OPTS="notebook"
+    networks:
+      - default
+  
+  spark-submit:
+    image: da-spark-image
+    entrypoint: /opt/spark/entrypoint.sh
+    command: [
+      "spark-submit",
+      "--master", "spark://da-spark-master:7077",
+      "--deploy-mode", "client",
+      "/opt/spark/apps/main.py"
+    ]
+    depends_on:
+      - spark-master
+      - spark-worker
+    volumes:
+      - ./book_data:/opt/spark/data
+      - ./spark_apps:/opt/spark/apps
+    networks:
+      - default
+
+volumes:
+  spark-logs:
+
+networks:
+  default:
+    name: da-spark-network
